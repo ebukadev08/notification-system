@@ -1,0 +1,124 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ebuka
+      POSTGRES_DB: notifications
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init_db:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - notifnet
+
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - notifnet
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - notifnet
+
+  api-gateway:
+    build: ./api-gateway
+    container_name: api-gateway
+    environment:
+      DATABASE_URL: postgresql://postgres:ebuka@postgres:5432/notifications
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
+    networks:
+      - notifnet
+
+  template-service:
+    build: ./template-service
+    container_name: template-service
+    environment:
+      DATABASE_URL: postgresql://postgres:ebuka@postgres:5432/notifications
+    ports:
+      - "3002:3002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - notifnet
+
+  user-service:
+    build: ./user-service
+    container_name: user-service
+    environment:
+      DATABASE_URL: postgresql://postgres:ebuka@postgres:5432/notifications
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - notifnet
+
+  email-consumer:
+    build: ./email-service
+    container_name: email-consumer
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      GATEWAY_URL: http://api-gateway:3000
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: 587
+      SMTP_USER: your-email@gmail.com
+      SMTP_PASSWORD: your-app-password
+    depends_on:
+      rabbitmq:
+        condition: service_started
+      api-gateway:
+        condition: service_started
+    networks:
+      - notifnet
+
+  push-service:
+    build: ./push-service
+    container_name: push-service
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      GATEWAY_URL: http://api-gateway:3000
+      REDIS_URL: redis://redis:6379
+      FCM_SERVER_KEY: your_fcm_key_or_leave_blank
+    depends_on:
+      rabbitmq:
+        condition: service_started
+      redis:
+        condition: service_started
+      api-gateway:
+        condition: service_started
+    networks:
+      - notifnet
+
+volumes:
+  pgdata:
+
+networks:
+  notifnet:
